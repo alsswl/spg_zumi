@@ -1,0 +1,494 @@
+from zumi.zumi import Zumi
+from zumi.util.screen import Screen
+from zumi.util.camera import Camera
+from zumi.util.vision import Vision
+from zumi.protocol import Note
+from zumi.util.gyro_draw import Gyro_Draw
+from zumi.util.color_classifier import ColorClassifier
+
+import numpy
+import time
+
+
+zumi = Zumi()
+camera = Camera()
+vision = Vision()
+screen = Screen()
+
+threshold=150
+turnSpeed=7
+forwardSpeed=5
+
+# user_name의 경우 zumidashboard.ai에 접속하여 나오는 화면에서 나오는 유저명을 작성
+# demo_name의 경우 "데모" 섹션에 존재하는 "색상 배우기"에서 저장하는 모델의 이름을 작성. 
+
+user_name = 'jandi' # user name
+demo_name = 'abcd' # model name
+knn = ColorClassifier(user_name=user_name)
+train = knn.load_model(demo_name)
+knn.fit("hsv")
+
+
+def bottom_read() :
+    global bottom_right, bottom_left
+    bottom_right = zumi.read_IR('bottom_right')
+    bottom_left = zumi.read_IR('bottom_left')
+
+def front_read():
+    global front_right, front_left
+    front_left = zumi.read_IR('front_left')
+    front_right = zumi.read_IR('front_right')    
+
+
+    
+    
+    
+
+##라인트레이싱
+def lane_trace() :
+    global bottom_right, bottom_left
+    bottom_read() 
+    
+    #left가 threshold보다 작고, right가 threshold보다 크면
+
+    if bottom_left < threshold and bottom_right > threshold :
+        zumi.stop()
+        zumi.control_motors(0,turnSpeed,0) ## 비동기
+    elif bottom_left > threshold and bottom_right < threshold : # #left가 threshold보다 크고, right가 threshold보다 작으면
+        zumi.stop()
+        zumi.control_motors(turnSpeed,0,0)
+    else :# 그 외
+        zumi.control_motors(forwardSpeed,forwardSpeed // 2,0) #// : 자바 나누기와 동일
+        
+def isWhite() : ## 하얀색 만났는지 알려주는 함수
+    if bottom_right < threshold and bottom_left < threshold :
+        return True
+    else :
+        return False
+    
+    
+    
+########################################c코스 호출
+    
+def ccourse():
+    try:
+        zumi.forward(speed=20, duration=0.5)
+        check = 0 #지역변수
+        
+        while True:
+            lane_trace() #laen_trace 호출
+            if isWhite(): # 하양색 3번 만나면 종료된다.
+                zumi.reverse(15, 0.1) # 잠깐 뒤로 돌기
+                time.sleep(0.5)
+            
+                if check == 0:
+                    zumi.turn_left(75) ## 아예 도는 함수
+                    
+                elif check == 1 or check == 2: ##아예 도는 함수
+                    zumi.turn_right(78)
+                else:
+                    break
+                
+                check += 1 # 세번 돌면 나가게 하기
+                
+        value = ""
+        camera.start_camera()
+        while True:
+            image = camera.capture() #QR코드 인식하기
+
+            qr_code = vision.find_QR_code(image)
+            qr_message = vision.get_QR_message(qr_code)
+
+            value = qr_message #오른쪽 아니면 왼쪽
+
+            if(qr_message == None):
+                continue
+            else:
+                break
+        
+        camera.close()
+
+        check = 0 ## check 초기화
+
+        if value == 'right': ## 오른쪽이라면 오른쪽으로 돌기 (그래로 linetracing하니까 살짝 돌리는 거임)
+            zumi.turn_right(50)
+        elif value == 'left': ## 왼쪽이라면 왼쪽으로 돌기
+            zumi.turn_left(50)
+            
+        while True: ########################################################### 조정하기
+            zumi.reverse(20, 0.05) # 살짝 뒤로 가기
+            
+            bottom_right = zumi.boolean_IR('bottom_right', 130)  # 하양색과 검은색을 구분하는 코드
+            bottom_left = zumi.boolean_IR('bottom_left', 130)   
+            if not bottom_right or not bottom_left: # 하얀색이면
+                break
+                
+        while True: ## 큐알코드 찍은 후 계속 가는 코드
+            lane_trace() 
+            if isWhite():
+                if value == 0: ## 이전에 오른쪽으로 돌았으면 왼쪽으로 돌아가기
+                    zumi.turn_right(60)
+                else: ## 이전에 왼쪽으로 돌았으면 오른쪽으로 돌아가기
+                    zumi.turn_right(60)
+                break
+                
+        while True: ## 조정하기
+            zumi.reverse(15, 0.05)
+            
+            bottom_right = zumi.boolean_IR('bottom_right', 130)
+            bottom_left = zumi.boolean_IR('bottom_left', 130)  
+            
+            if not bottom_right or not bottom_left:
+                break
+            
+        while True:
+            lane_trace()
+            if isWhite():
+                break
+                
+        zumi.forward(speed=13, duration=1)
+            
+                
+    except KeyboardInterrupt:
+        camera.close()
+        zumi.stop()
+        
+
+        
+
+
+
+#camera.start_camera()
+def qrcode():    
+    camera.start_camera()
+    try:
+        while True:
+            image = camera.capture()
+
+            qr_code = vision.find_QR_code(image)
+            qr_message = vision.get_QR_message(qr_code)
+
+            value = qr_message
+                
+            if(qr_message == None):
+                continue
+            else:
+                zumi.stop()
+                screen.draw_text_center(str(value))
+                if value == 'factory':
+                    zumi.drive_over_markers(3, 25, 125, 10)
+                    zumi.turn_right(90)
+                    zumi.forward(duration=1.35) # 전진 2초 후에 정지
+                    time.sleep(2) # 2초 기다리기
+                    #zumi.turn(90)
+                    zumi.reverse(duration=1.35)
+                    #zumi.turn_right(90)
+                    zumi.turn_left(90)
+
+                elif value == 'school':
+                    zumi.drive_over_markers(8, 25, 125, 10)
+                    zumi.turn_left(90,1.5)
+                    zumi.forward(duration=1.25) # 전진 2초 후에 정지
+                    time.sleep(2) # 2초 기다리기
+                    #zumi.turn(-90)
+                    zumi.reverse(duration=1.35)
+                    #zumi.turn_left(90)
+                    zumi.turn_right(90)
+    
+                elif value == 'building':
+                    zumi.drive_over_markers(10, 25, 125, 10)
+                    zumi.turn_right(90)
+                    zumi.forward(duration=1.25) # 전진 2초 후에 정지
+                    time.sleep(2) # 2초 기다리기
+                    #zumi.turn(90)
+                    zumi.reverse(duration=1.35)
+                    #zumi.turn_right(90)
+                    zumi.turn_left(90)
+                    
+                elif value == 'museum' :
+                    zumi.drive_over_markers(14, 25, 125, 10)
+                    zumi.turn_left(90)
+                    zumi.forward(duration=1.25) # 전진 2초 후에 정지
+                    time.sleep(2) # 2초 기다리기
+                    #zumi.turn(-90)
+                    zumi.reverse(duration=1.35)
+                    #zumi.turn_left(90)
+                    zumi.turn_right(90)
+                    
+                break
+            break
+
+        camera.close()
+                
+
+    except KeyboardInterrupt:
+        camera.close()
+
+        
+def sensor():
+    try:
+        for i in range(100):
+            front_right = zumi.read_IR('front_right')
+            front_left = zumi.read_IR('front_left')
+            if front_left > 100 and front_right > 100:
+                zumi.stop()
+
+            elif front_left > 100:
+                zumi.turn_right()
+
+            elif front_right > 100:
+                zumi.turn_left()
+
+            else:
+                zumi.forward()
+        
+
+    except KeyboardInterrupt:
+            zumi.stop()  
+
+
+# 기기마다의 센서 감지 능력이 다를 수 있기에 해당 전역 변수들은 조정이 필요할 수 있습니다.
+
+now_angle = zumi.read_z_angle()
+
+# IR sensor threshold variable
+FL_threshold=100
+FR_threshold=100
+BL_threshold=100
+BR_threshold=100
+
+# IR variable
+FL_value = zumi.read_IR('front_left')
+FR_value = zumi.read_IR('front_right')
+BL_value = zumi.read_IR('bottom_left')
+BR_value = zumi.read_IR('bottom_right')
+
+# Speed variable
+turnSpeed=7
+forwardSpeed=5
+
+def bottom_read():
+    global bottom_right, bottom_left
+    bottom_left = zumi.read_IR('bottom_left')
+    bottom_right = zumi.read_IR('bottom_right')
+    
+def front_read():
+    global front_right, front_left
+    front_left = zumi.read_IR('front_left')
+    front_right = zumi.read_IR('front_right')
+
+    
+def isWhite():
+    global bottom_right, bottom_left, BL_threshold, BR_threshold
+    if bottom_right < BR_threshold and bottom_left < BL_threshold :
+        return True
+    else :
+        return False
+
+    
+def enter_lane_trace() : 
+    global bottom_right, bottom_left
+    bottom_read()
+    
+    turnSpeed = 5
+    forwardSpeed = 3
+
+    if bottom_left < threshold and bottom_right > threshold :
+        zumi.stop()
+        zumi.control_motors(0,turnSpeed,0)
+    elif bottom_left > threshold and bottom_right < threshold :
+        zumi.stop()
+        zumi.control_motors(turnSpeed + 5,0,0)
+    else :
+        zumi.control_motors(forwardSpeed+4,forwardSpeed,0)
+        
+        
+#nowcolor = "RED"
+  
+            
+def colorclassify():
+    try:
+        
+        arr = [0, 0, 0]
+        
+        for i in range(4):
+            image = camera.capture()
+            predict = knn.predict(image)
+
+            if predict == "RED":
+                arr[0] += 1
+            elif predict == "YELLOW":
+                arr[1] += 1
+            elif predict == "GREEN":
+                arr[2] += 1
+            
+        index = numpy.argmax(arr)
+        
+        if index == 0:
+            screen.draw_text_center("RED")
+            nowcolor = "RED"
+        elif index == 1:
+            screen.draw_text_center("YELLOW")
+            nowcolor = "YELLOW"
+        else:
+            screen.draw_text_center("GREEN")
+            nowcolor = "GREEN"
+        
+        return nowcolor
+        
+        
+        
+             
+    except KeyboardInterrupt:
+        zumi.stop()
+
+def isWhite() :
+    if bottom_right < threshold and bottom_left < threshold :
+        return True
+    else :
+        return False
+    
+    
+###B course
+
+
+def enter_course() :
+    check = 0
+    while True:
+        enter_lane_trace()
+        if isWhite():
+            check += 1
+            zumi.reverse(20, 0.8)
+            time.sleep(0.5)
+
+        if check > 2:
+            break
+
+            
+def gofront(t, flag):
+    start = 0
+    
+    start = time.time()
+    end = start
+    nowcolor = "GREEN"
+    isok = True
+   
+
+    
+    while end-start < t and isok:
+        print(end-start)
+        print(nowcolor)
+        
+        
+        #nowcolor = colorclassify()
+        zumi.control_motors(38,37,0)
+
+        print(end - start)
+        
+        end = time.time()
+        nowcolor = colorclassify()
+        
+        if nowcolor == "RED" and flag == 0:
+            flag = 1
+            zumi.stop()
+            print(nowcolor)
+            
+            
+            while True : 
+                zumi.stop()
+                nowcolor = colorclassify()
+                if nowcolor == "GREEN"  : 
+                    camera.close()
+                    break
+            
+                
+            newTime = end - start
+            
+            start = time.time()
+            end = start
+            
+            while end - start < t - newTime :
+                zumi.control_motors(33,37,0)
+                end = time.time()
+                if(end - start < t-newTime) : isok = False
+                    
+
+    return flag
+    print("end")
+    zumi.stop()
+
+
+    
+            
+def bcourse():
+    camera.start_camera()
+
+    #print("안녕! 살아있어요")
+    flag = gofront(0.8, 0)
+    zumi.turn_right(92)
+
+    flag = gofront(1.5,flag)
+    zumi.turn_right(92)
+
+    flag = gofront(1.8,flag)
+    zumi.turn_left(93)
+
+    flag = gofront(1.3,flag)
+    zumi.turn_left(95)
+    gofront(1.4,flag)
+    enter_course()
+    camera.close()
+
+
+try:
+    #A course
+    def acourse():
+        qrcode()
+        camera.close()
+    
+    acourse()
+
+    zumi.stop()
+    nowcolor = "RED"
+    
+
+    while True:
+        zumi.control_motors(30,37,0)
+        front_right = zumi.read_IR('front_right')
+        front_left = zumi.read_IR('front_left')
+    
+        if front_left < 100 or front_right < 100:
+            zumi.turn(-90)
+            zumi.forward(speed=35,duration=1.0)
+            break
+    enter_course()
+    print("A코스 끝")
+
+    ##B코드 호출
+    camera.start_camera()
+
+    colornow = "YELLOW"
+    
+    while True:
+        colornow = colorclassify()
+        print(colornow)
+        if(colornow == "GREEN") : break
+            
+            
+    #colornow = colorclassify();
+    #print(colornow)
+    camera.close()
+        
+    bcourse()
+    zumi.stop()
+    
+
+    colorclassify()
+    bcourse()
+    enter_course()
+    #camera.close()
+     # c코스 호출
+    ccourse()
+except:
+    camera.close()
+    zumi.stop()
